@@ -1,4 +1,4 @@
-import { app, WebContentsView, dialog } from 'electron';
+import { app, WebContentsView, dialog, shell } from 'electron';
 import { restartService } from './remote-controls.mjs';
 import { startTunnel, readToken } from './ssh.mjs';
 import { DeviceController as Controller } from './controller-core.mjs';
@@ -6,6 +6,8 @@ import { DeviceController as Controller } from './controller-core.mjs';
 export class DeviceController extends Controller {
   constructor(owner) {
     super(owner, { app, WebContentsView, startTunnel, readToken, restartService,
+      openExternal: url => shell.openExternal(url),
+      showLinkError: message => dialog.showErrorBox('无法打开外部链接', message),
       confirmRestart: async device => (await dialog.showMessageBox(owner.window, {
         type: 'warning', title: `重启远端 DSH — ${device.name}`,
         message: `重启 ${device.name} 的 DSH 服务？`,

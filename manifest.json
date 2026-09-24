@@ -1,5 +1,5 @@
 {
-  "patchVersion": "1.0.0",
+  "patchVersion": "1.0.1",
   "targetRepository": "https://github.com/anywhere-labs/dsh-desktop",
   "targetVersion": "2.0.13",
   "files": [

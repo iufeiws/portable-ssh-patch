@@ -16,7 +16,7 @@ function fixture(t, failAuth = false) {
       this.options = options; this.closed = false; this.loaded = []; this.draft = '';
       Object.assign(this, { webContents: Object.assign(new EventEmitter(), {
         session: { setProxy: async () => {}, fetch: async () => ({ status: failAuth ? 401 : 200, body: { cancel: async () => {} } }) },
-        setWindowOpenHandler() {}, isDestroyed: () => this.closed,
+        setWindowOpenHandler: handler => { this.openWindow = handler; }, isDestroyed: () => this.closed,
         close: () => { this.closed = true; }, loadURL: async url => this.loaded.push(url), focus() {}
       }) });
       views.push(this);
@@ -142,4 +142,28 @@ test('restart failures expose the service error and never replay the restart', a
   await assert.rejects(f.controller.control('restart'));
   assert.equal(attempts, 1); assert.match(f.controller.state().error, /permission denied/);
   assert.equal(f.starts(), 1);
+});
+
+
+test('remote popup opens through the system handler without changing device connection', async t => {
+  const f = fixture(t); f.controller.save([device('a')]); await f.call('connect', 'a');
+  const opened = [], errors = [];
+  f.controller.services.openExternal = async url => { opened.push(url); };
+  f.controller.services.showLinkError = message => errors.push(message);
+  f.views[0].openWindow({ url: 'https://example.com/docs' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(opened, ['https://example.com/docs']);
+  assert.deepEqual(errors, []);
+  assert.equal(f.controller.state().error, '');
+  assert.equal(f.controller.state().tabs.a.connected, true);
+  f.controller.services.openExternal = async () => { throw new Error('browser unavailable'); };
+  f.views[0].openWindow({ url: 'https://example.com/docs' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(errors.length, 1);
+  assert.equal(f.controller.state().error, '');
+  assert.equal(f.controller.state().tabs.a.connected, true);
+  f.views[0].openWindow({ url: 'file:///private/file' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(opened.length, 1);
+  assert.equal(errors.length, 2);
 });

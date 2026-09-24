@@ -58,6 +58,15 @@ export class DeviceController {
     writeFileSync(temp, JSON.stringify(devices, null, 2) + '\n', { mode: 0o600 });
     renameSync(temp, this.path); this.devices = devices;
   }
+  async openExternalLink(url) {
+    try {
+      const target = new URL(url);
+      if (!['http:', 'https:', 'mailto:'].includes(target.protocol)) throw new Error(`不支持的链接协议：${target.protocol}`);
+      await this.services.openExternal(target.href);
+    } catch (error) {
+      this.services.showLinkError(error.message);
+    }
+  }
   async control(action) {
     const local = { terminal: 'openTerminal', reload: 'reload', developer: 'developerTools', restart: 'restart' };
     if (!Object.hasOwn(local, action)) throw new Error('不支持的设备控件');
@@ -142,7 +151,10 @@ export class DeviceController {
       const web = view.webContents;
       this.owner.window.contentView.addChildView(view, 1);
       view.setVisible(this.selected === tab.id); this.resize();
-      web.setWindowOpenHandler(() => { tab.error = '远端页面请求打开新窗口，请在浏览器中处理外部链接'; this.publish(); return { action: 'deny' }; });
+      web.setWindowOpenHandler(({ url }) => {
+        void this.openExternalLink(url);
+        return { action: 'deny' };
+      });
       const guard = (event, url) => { if (new URL(url ?? event.url).origin !== origin) { event.preventDefault(); tab.error = '已阻止页面离开所选设备的 DSH 地址'; this.publish(); } };
       web.on('will-navigate', guard); web.on('will-redirect', guard);
       web.on('will-attach-webview', event => event.preventDefault());

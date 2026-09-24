@@ -2,9 +2,9 @@
 
 English | [简体中文](./README.zh-CN.md)
 
-Patch **v1.0.0** for [anywhere-labs/dsh-desktop](https://github.com/anywhere-labs/dsh-desktop) **v2.0.13**. This patch adds an SSH device switcher to that desktop application. The desktop connects directly to a remote DSH instance through OpenSSH local port forwarding. No relay service or remote DSH modifications are required.
+Patch **v1.0.1** for [anywhere-labs/dsh-desktop](https://github.com/anywhere-labs/dsh-desktop) **v2.0.13**. This patch adds an SSH device switcher to that desktop application. The desktop connects directly to a remote DSH instance through OpenSSH local port forwarding. No relay service or remote DSH modifications are required.
 
-`v1.0.0` is this patch's release version; `v2.0.13` is the DSH Desktop version it targets. The patch does not include the upstream desktop application. Install the matching unpacked DSH Desktop build separately. The installer also checks the exact original file hashes, so the version number alone does not establish compatibility.
+`v1.0.1` is this patch's release version; `v2.0.13` is the DSH Desktop version it targets. The patch does not include the upstream desktop application. Install the matching unpacked DSH Desktop build separately. The installer also checks the exact original file hashes, so the version number alone does not establish compatibility.
 
 ## Behavior
 
@@ -15,6 +15,8 @@ Patch **v1.0.0** for [anywhere-labs/dsh-desktop](https://github.com/anywhere-lab
 - SSH failures and remote DSH health-check failures are reported per device, including the failing stage and details. Failed devices remain selected until you choose another device. Reconnection is explicit and affects only that device. No application requests are automatically replayed.
 - **Disconnect** explicitly closes a device's page and tunnel; save any unsent work first. Editing the endpoint of a cached device requires disconnecting it first.
 - The terminal button is disabled for remote devices and remains available locally. Refresh, developer tools and ordinary restart follow the selected device. Remote restart names the server and service, asks for confirmation, restarts only that user service and reauthenticates. Cancelling does not affect its connection. Desktop updates, window modes and desktop recovery remain local operations.
+
+New-window links use the system browser (HTTP/HTTPS) or mail application, matching the original desktop behavior. Opening failures appear in a dialog and do not change device connection status.
 
 ## Requirements and supported builds
 
