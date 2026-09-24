@@ -1,0 +1,15 @@
+{
+  "patchVersion": "1.0.0",
+  "targetRepository": "https://github.com/anywhere-labs/dsh-desktop",
+  "targetVersion": "2.0.13",
+  "files": [
+    {
+      "path": "lib/electron-runtime-CHyIF9_h.js",
+      "sha256": "1cd63fd62cb07655a0546c5a3b482ddd4c1cbaa505b87aed156d2815ef44aa1e"
+    },
+    {
+      "path": "lib/native-ui/compatibility-chrome.html",
+      "sha256": "d039f087d876414c809a0eaaa1d78f2ab0970b78295b90ae1e6f6030121b2f9c"
+    }
+  ]
+}

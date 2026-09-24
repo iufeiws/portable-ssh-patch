@@ -1,0 +1,26 @@
+#ssh-device-button { -webkit-app-region: no-drag; pointer-events: auto; font: inherit; font-size: 12px; border: 1px solid #8885; border-radius: 6px; padding: 3px 9px; color: inherit; background: transparent; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+#ssh-device-button[data-error=true] { color: #e87870; }
+#ssh-device-panel { -webkit-app-region: no-drag; pointer-events: auto; position: fixed; inset: 42px 18px auto auto; width: min(390px, calc(100vw - 36px)); max-height: calc(100vh - 62px); overflow: auto; z-index: 99999; padding: 18px; border: 1px solid #8885; border-radius: 12px; background: #fafafa; color: #202020; box-shadow: 0 12px 36px #0005; font: 13px/1.5 system-ui; display: block; }
+#ssh-device-panel .device-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+#ssh-device-panel h2 { margin: 0; flex: 1; font-size: 15px; font-weight: 650; }
+#ssh-device-panel button { border: 1px solid #8885; border-radius: 7px; padding: 6px 10px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+#ssh-device-panel button:disabled { opacity: .5; cursor: wait; }
+#ssh-device-panel .device-icon { border: 0; font-size: 20px; padding: 0 7px; }
+#ssh-device-panel .device-row { display: flex; align-items: center; border-radius: 8px; margin-top: 5px; }
+#ssh-device-panel .device-row[data-selected=true] { background: #8882; }
+#ssh-device-panel .device-select { text-align: left; flex: 1; border: 0; padding: 10px; }
+#ssh-device-panel .device-select strong, #ssh-device-panel .device-select small { display: block; }
+#ssh-device-panel small, #ssh-device-panel .device-note { opacity: .7; font-size: 12px; }
+#ssh-device-panel .device-detail { padding: 8px 10px; }
+#ssh-device-panel .device-detail button { margin: 6px 6px 0 0; }
+#ssh-device-panel .device-error { color: #d85f55; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; user-select: text; }
+#ssh-device-panel .device-note { margin: 12px 0 0; }
+#ssh-device-panel label { display: block; margin-top: 14px; }
+#ssh-device-panel input { width: 100%; box-sizing: border-box; display: block; color: inherit; background: transparent; border: 1px solid #8886; border-radius: 7px; padding: 9px 10px; margin-top: 5px; font: inherit; }
+#ssh-device-panel details { margin-top: 16px; }
+#ssh-device-panel summary { cursor: pointer; opacity: .75; }
+#ssh-device-panel .device-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+#ssh-device-panel .device-primary { background: #eee; color: #222; }
+#ssh-device-panel .device-delete { color: #d85f55; border: 0; margin-top: 12px; padding-left: 0; }
+@media (prefers-color-scheme: dark) { #ssh-device-panel { background: #262626; color: #ededed; } }
+button[data-remote-terminal-disabled] { opacity: .35; cursor: not-allowed; }

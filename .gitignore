@@ -1,0 +1,9 @@
+node_modules/
+*.zip
+*.log
+ssh-devices.json
+ssh-device-patch-backup/
+artifacts/
+screenshots/
+.env
+.env.*
