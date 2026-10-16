@@ -12,6 +12,17 @@
 // Header layout (verified against this build):
 //   [u32 4][u32 headerSize][u32 headerSize-4][u32 headerSize-10][JSON][pad]
 //   JSON starts at 16, JSON length = headerSize - 10, data starts at 8 + headerSize.
+// `node` is not always plain Node. DSH Desktop ships a node.cmd that sets
+// ELECTRON_RUN_AS_NODE=1 and runs the desktop executable, so the interpreter can be
+// Electron-as-Node. Electron installs an fs hook that intercepts every path matching
+// /\.asar/i and treats it as an archive *inside* another archive, so
+// fs.readFileSync('<...>/resources/app.asar') fails with
+//   ENOENT,  not found in <...>/resources/app.asar
+// Setting process.noAsar makes the hook ignore asar paths. This module only ever
+// treats the archive as opaque bytes, so disabling the hook is always correct here
+// and is a no-op under plain Node.
+process.noAsar = true;
+
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 

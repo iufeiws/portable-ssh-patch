@@ -9,15 +9,26 @@
 // rewrites the archive byte-preservingly. The original archive is kept under
 // resources/ssh-device-patch-backup/ so uninstall can restore it exactly.
 // resources/app.asar.unpacked is never touched.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs';
+//
+// The desktop must be fully exited first, and that is enforced rather than merely
+// documented: see runningInstances() for why patching a live process is unsafe.
+import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, rmSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { buildPatchedAsar, verifyTarget, sha256 } from './lib/asar-patch.mjs';
 
+// See lib/asar-patch.mjs: when `node` is Electron-as-Node, Electron's asar fs hook
+// intercepts any `*.asar` path and every read/write/copy of resources/app.asar fails
+// with ENOENT. This script only handles the archive as an opaque file.
+process.noAsar = true;
+
 const here = dirname(fileURLToPath(import.meta.url));
-const [action, argument] = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const force = rawArgs.includes('--force');
+const [action, argument] = rawArgs.filter((arg) => arg !== '--force');
 if (!['install', 'uninstall', 'check'].includes(action) || !argument) {
-  throw new Error('用法：node install.mjs install|uninstall|check "DSH Desktop 安装目录"');
+  throw new Error('用法：node install.mjs install|uninstall|check "DSH Desktop 安装目录" [--force]');
 }
 
 const root = resolve(argument);
@@ -34,6 +45,76 @@ const snippets = {
   injectPreloadFn: readFileSync(join(here, 'payload', 'inject-preload-fn.txt'), 'utf8')
 };
 const hashOf = (path) => sha256(readFileSync(path));
+
+// Refuse to patch a desktop that is still running.
+//
+// A live process caches the asar header when it starts. This patch changes the header
+// size (in this build the data region moves by 4 bytes), so a process that was already
+// running keeps reading every file it loads later from a shifted offset. The window
+// still opens and most code keeps working because it was loaded before the swap, but
+// any module pulled from the archive afterwards fails - for example
+// `dsh-web-fetch-http` can no longer import `undici`, surfacing as
+// "Invalid package config ... app.asar/node_modules/undici/package.json".
+//
+// Restarting the desktop is enough to recover; reinstalling is neither necessary nor
+// helpful.
+//
+// Detection is deliberately narrowed to the executables that live in this installation
+// directory. Enumerating every process and reading its .Path can block indefinitely on
+// a machine with unrelated stuck processes, which would hang the installer; querying a
+// few known names costs milliseconds. Matching on the full path (not just the image
+// name) also keeps a second, identically named install from being reported.
+//
+// Returns the matching executable paths, or [] when none were found or the check
+// could not be completed.
+function runningInstances(installRoot) {
+  const needle = installRoot.toLowerCase().replace(/'/g, "''");
+  try {
+    if (process.platform === 'win32') {
+      const names = readdirSync(installRoot)
+        .filter((name) => /\.exe$/i.test(name))
+        .filter((name) => !/^uninstall/i.test(name))
+        .map((name) => name.slice(0, -4));
+      if (!names.length) return [];
+      const nameList = names.map((name) => `'${name.replace(/'/g, "''")}'`).join(',');
+      const script = [
+        "$ErrorActionPreference='SilentlyContinue'",
+        `Get-Process -Name ${nameList} | ForEach-Object { $_.Path } | Where-Object { $_ }` +
+          ` | ForEach-Object { $_.ToLower() } | Where-Object { $_.StartsWith('${needle}') }` +
+          ' | Select-Object -Unique'
+      ].join('; ');
+      const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 15000
+      });
+      return out.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    }
+    const self = process.argv[1] || '';
+    const out = execFileSync('ps', ['-Ao', 'command='], { encoding: 'utf8', timeout: 15000 });
+    return out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.includes(installRoot) && !line.includes(self));
+  } catch (error) {
+    console.warn(`（未能检查 DSH Desktop 是否在运行：${error.message}）`);
+    return [];
+  }
+}
+
+const running = action === 'check' ? [] : runningInstances(root);
+if (running.length) {
+  if (!force) {
+    throw new Error(
+      '检测到 DSH Desktop 正在运行，拒绝修改 app.asar：\n  ' + running.join('\n  ') +
+      '\n\n正在运行的进程缓存了旧的 asar 头，而本补丁会改变头长度，' +
+      '\n修改后它会从偏移错位的位置读取归档内的文件，导致部分模块加载失败。' +
+      '\n请通过托盘菜单完全退出程序后重试。' +
+      '\n（确认要冒险继续，可加 --force；那样安装后必须完全重启才会生效。）'
+    );
+  }
+  console.warn('警告：DSH Desktop 正在运行，--force 已跳过运行检查；安装后必须完全重启程序。');
+}
 
 if (!existsSync(asarPath)) {
   throw new Error(`目标不是 ${manifest.targetProduct} ${manifest.targetVersion} 的 app.asar 安装：找不到 ${asarPath}`);
@@ -88,7 +169,4 @@ if (action === 'check') {
   console.log(`  resources/app.asar  ${result.patchedSha256}`);
   console.log(`  原文件备份          ${backupAsar}`);
   console.log('请完全重启 DSH Desktop；resources/app.asar.unpacked 未被改动。');
-  if (existsSync(unpackedPath)) {
-    console.log('（注意：安装时若程序正在运行，请通过托盘退出后重新打开，否则仍在跑旧代码。）');
-  }
 }

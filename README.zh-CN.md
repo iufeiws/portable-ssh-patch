@@ -5,7 +5,7 @@
 | DSH Desktop 构建 | 安装布局 | 补丁版本 | 目录 |
 | --- | --- | --- | --- |
 | `2.0.13`（`dsh-plugin-desktop`） | 解包 `resources/app` | `v1.0.1` | [`dsh-desktop-2.0.13/`](./dsh-desktop-2.0.13) |
-| `0.11.1`（`dsh-desktop`） | 单个 `resources/app.asar` | `v1.0.0` | [`dsh-desktop-0.11.1/`](./dsh-desktop-0.11.1) |
+| `0.11.1`（`dsh-desktop`） | 单个 `resources/app.asar` | `v1.0.1` | [`dsh-desktop-0.11.1/`](./dsh-desktop-0.11.1) |
 
 先确认你的 DSH Desktop 版本，再按对应目录里的 README 操作：
 
@@ -50,5 +50,5 @@ node ./install.mjs uninstall "<DSH Desktop 安装目录>"
 ```
 .
 ├── dsh-desktop-2.0.13/   补丁 v1.0.1 —— 解包 resources/app 构建
-└── dsh-desktop-0.11.1/   补丁 v1.0.0 —— resources/app.asar 构建
+└── dsh-desktop-0.11.1/   补丁 v1.0.1 —— resources/app.asar 构建
 ```

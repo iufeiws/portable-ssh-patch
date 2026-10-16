@@ -39,13 +39,17 @@ so the token is read from the DSH startup log instead (`run-dsh-web.sh` tees to 
 
 ## Install
 
-Fully exit DSH Desktop (tray → exit) first:
+**Fully exit DSH Desktop first** (tray → exit). This is enforced rather than merely documented: the installer detects a running desktop and refuses.
+
+A running process caches the asar header when it starts, and this patch changes the header size (in this build the data region moves by 4 bytes). A process that was already running therefore keeps reading everything it loads afterwards from a shifted offset. The window still opens and most code keeps working, because it was already in memory — but any module pulled out of the archive later fails, for example `dsh-web-fetch-http` can no longer import `undici` (`Invalid package config ... app.asar/node_modules/undici/package.json`). **Restarting the desktop is all that is needed to recover; reinstalling neither helps nor is required.** `--force` bypasses the check.
 
 ```powershell
 $DshInstallDir = 'C:\Users\<you>\AppData\Local\Programs\Deepseek H Desktop\DSH Desktop'
 node ./install.mjs check   "$DshInstallDir"
 node ./install.mjs install "$DshInstallDir"
 ```
+
+`check` compares against the **original** archive, so on an installation that already has the patch applied it reports a fingerprint mismatch by design — that is `check` telling you the file is no longer pristine, not a failure of the patch.
 
 The installer verifies the archive fingerprint and every injection anchor, backs the original up to `resources/ssh-device-patch-backup/app.asar`, writes the patched archive and a `receipt.json`.
 
@@ -61,7 +65,7 @@ Exit the app, then:
 node ./install.mjs uninstall "$DshInstallDir"
 ```
 
-Uninstall verifies that the current archive equals the recorded `patched` hash and that the backup equals the original hash before restoring; otherwise it refuses and keeps the backup. Device configuration stays in `userData/ssh-devices.json`.
+Uninstall verifies that the current archive equals the recorded `patched` hash and that the backup equals the original hash before restoring; otherwise it refuses and keeps the backup. Device configuration stays in `userData/ssh-devices.json`. It refuses while the desktop is running, for the same reason as install.
 
 ## Testing
 
@@ -82,11 +86,14 @@ node ./test-chain.mjs h100-02 19989
 
 The main-process device logic is inlined with **no new imports** (reusing the bundle's existing `spawn`/`execFile`/`promisify`, `net` `createServer`, timers `setTimeout`, `createRequire`, `ipcMain`/`app`/`BrowserWindow`/`dialog`) to keep breakage risk minimal.
 
+Both entry points also set `process.noAsar = true`. `node` is not always plain Node: DSH Desktop ships a `node.cmd` that sets `ELECTRON_RUN_AS_NODE=1`, and Electron's asar fs hook then intercepts every path matching `*.asar`, so `fs.readFileSync('…/resources/app.asar')` fails with `ENOENT,  not found in …/resources/app.asar`. This tooling treats the archive as opaque bytes, so disabling the hook is always correct here and is a no-op under plain Node.
+
 ## Known limitations
 
 - A remote service that **crash-loops** (e.g. every 8 seconds) invalidates its token continuously; fix that host first
 - First connect depends on SSH setup time (~10–15 s per connection here); it is parallelised but still needs waiting, and the UI does not freeze
 - The dropdown is DOM in the local page while devices are native views, so opening it **temporarily detaches the active view** and re-attaches it on close (no reconnect)
+- **Patching a running desktop leaves that process confused until it is restarted** (see Install); the installer refuses to do it, but a `--force` install still needs the full restart
 
 ## Layout
 

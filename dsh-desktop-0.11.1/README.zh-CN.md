@@ -39,13 +39,17 @@ No journal files were opened due to insufficient permissions
 
 ## 安装
 
-先**完全退出 DSH Desktop**（托盘 → 退出），然后：
+**先完全退出 DSH Desktop**（托盘 → 退出）。这一点是**强制检查**，不只是文档要求：安装器会检测正在运行的程序并拒绝修改。
+
+正在运行的进程在启动时就缓存了 asar 头，而本补丁会改变头长度（本构建中数据区整体后移 4 字节）。因此已经在跑的进程之后每次读归档文件都会偏移错位：窗口照常打开、大部分代码也照常工作（它们早已载入内存），但之后才按需加载的模块会失败——例如 `dsh-web-fetch-http` 无法再 import `undici`（报 `Invalid package config ... app.asar/node_modules/undici/package.json`）。**恢复只需重启程序，重装既不必要也没用。** 加 `--force` 可跳过该检查。
 
 ```powershell
 $DshInstallDir = 'C:\Users\<你>\AppData\Local\Programs\Deepseek H Desktop\DSH Desktop'
 node ./install.mjs check     "$DshInstallDir"     # 只读校验
 node ./install.mjs install   "$DshInstallDir"
 ```
+
+`check` 是拿**原始**包做比对，所以在已经打过补丁的安装上它会报指纹不一致——那是 `check` 在说明这个文件已不是原始状态，不是补丁失败。
 
 或使用 `Install.ps1`（需要 `pwsh`/PowerShell）：
 
@@ -67,7 +71,7 @@ pwsh -NoProfile -File ./Install.ps1 -InstallDir "$DshInstallDir"
 node ./install.mjs uninstall "$DshInstallDir"
 ```
 
-卸载会校验「当前 `app.asar` 必须等于安装时记录的 `patched` 哈希」「备份必须等于原始哈希」，两者都通过才恢复原文件；否则拒绝覆盖并保留备份。设备配置保留在 `userData/ssh-devices.json`。
+卸载会校验「当前 `app.asar` 必须等于安装时记录的 `patched` 哈希」「备份必须等于原始哈希」，两者都通过才恢复原文件；否则拒绝覆盖并保留备份。设备配置保留在 `userData/ssh-devices.json`。它同样会在程序运行时拒绝执行，原因与安装相同。
 
 ## 使用
 
@@ -96,11 +100,14 @@ node ./test-chain.mjs h100-02 19989        # 真实的一次端到端验证
 
 主进程侧的设备逻辑内联在 `out/main/index.js` 中，**不新增任何 import**（复用该 bundle 已有的 `spawn`/`execFile`/`promisify`/`net` 的 `createServer`/timers 的 `setTimeout`/`createRequire`/`ipcMain`/`app`/`BrowserWindow`/`dialog`），以最大限度降低破坏风险。
 
+两个入口都会设置 `process.noAsar = true`。`node` 未必是原版 Node：DSH Desktop 自带的 `node.cmd` 会设置 `ELECTRON_RUN_AS_NODE=1`，此时 Electron 的 asar fs 钩子会拦截任何匹配 `*.asar` 的路径，于是 `fs.readFileSync('…/resources/app.asar')` 会报 `ENOENT,  not found in …/resources/app.asar`。本工具只是把归档当作不透明的字节流，所以在这里关掉该钩子永远是对的，而在原版 Node 下则是空操作。
+
 ## 已知限制
 
 - 远端服务若**反复崩溃重启**（例如每 8 秒一次），其令牌会不断变化，任何时刻都可能已失效——请先修好那台机器
 - 首次连接受 SSH 建连速度影响（本环境约 10–15 秒/次），已并行化但仍需等待；界面不冻结
 - 面板是画在「本机页面」里的 DOM，而设备是原生视图；因此**打开面板时会临时移走当前设备视图**，关闭后放回（不重连）
+- **在程序运行时打补丁会让那个进程一直读取错位，直到重启为止**（见「安装」）；安装器会拒绝这么做，但用 `--force` 强行安装后仍然必须完整重启
 
 ## 目录
 

@@ -5,7 +5,7 @@ SSH device switcher patches for **DSH Desktop**. Each patch targets one concrete
 | DSH Desktop build | Install layout | Patch version | Directory |
 | --- | --- | --- | --- |
 | `2.0.13` (`dsh-plugin-desktop`) | unpacked `resources/app` | `v1.0.1` | [`dsh-desktop-2.0.13/`](./dsh-desktop-2.0.13) |
-| `0.11.1` (`dsh-desktop`) | single `resources/app.asar` | `v1.0.0` | [`dsh-desktop-0.11.1/`](./dsh-desktop-0.11.1) |
+| `0.11.1` (`dsh-desktop`) | single `resources/app.asar` | `v1.0.1` | [`dsh-desktop-0.11.1/`](./dsh-desktop-0.11.1) |
 
 Find your DSH Desktop version, then follow the README in the matching directory:
 
@@ -50,5 +50,5 @@ Each installer verifies the exact original file hashes recorded in that director
 ```
 .
 ├── dsh-desktop-2.0.13/   patch v1.0.1 — unpacked resources/app build
-└── dsh-desktop-0.11.1/   patch v1.0.0 — resources/app.asar build
+└── dsh-desktop-0.11.1/   patch v1.0.1 — resources/app.asar build
 ```
