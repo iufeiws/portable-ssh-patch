@@ -1,0 +1,27 @@
+{
+  "patchVersion": "1.0.0",
+  "targetProduct": "DSH Desktop",
+  "targetName": "dsh-desktop",
+  "targetVersion": "0.11.1",
+  "layout": "app.asar",
+  "targetRepository": "https://github.com/deepseek-ai/deepseek-harness",
+  "files": [
+    {
+      "path": "resources/app.asar",
+      "sha256": "c6ad1d6a90b2f52154be97210c0e32cbbedc471822d3fe2f3f74b21c619b1007",
+      "size": 281491121
+    }
+  ],
+  "patchedEntries": [
+    "out/main/index.js",
+    "out/preload/index.cjs"
+  ],
+  "untouched": [
+    "resources/app.asar.unpacked"
+  ],
+  "injectionAnchors": [
+    "out/main/index.js: import block (inject the device-switch module after imports)",
+    "out/preload/index.cjs: function mountWindowsMenuBar(options) {",
+    "out/preload/index.cjs: mountWindowsMenuBar({ document: document2, ipcRenderer });\\n  syncTheme(document2, ipcRenderer);"
+  ]
+}

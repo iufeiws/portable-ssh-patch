@@ -1,0 +1,386 @@
+function mountDeviceSwitcher(options) {
+  const { document: document2, ipcRenderer } = options;
+  if (document2.querySelector("[data-dsh-device-switcher]")) return;
+  const root = document2.createElement("div");
+  root.setAttribute("data-dsh-device-switcher", "");
+  const shadow = root.attachShadow({ mode: "open" });
+  const style = document2.createElement("style");
+  style.textContent = `
+    :host { position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 2147483646;
+      height: var(--dsh-windows-titlebar-height, 40px); display: flex; align-items: center; gap: 8px;
+      max-width: 92vw; font-family: var(--dsw-font-family, "Segoe UI", "Microsoft YaHei", sans-serif); -webkit-app-region: no-drag;
+      --ds-bg: #ffffff; --ds-fg: #202124; --ds-muted: #5f6368; --ds-border: rgba(0,0,0,.14);
+      --ds-hover: rgba(0,0,0,.06); --ds-accent: #4d6bfe; --ds-danger: #c0392b; --ds-input: #ffffff;
+      --ds-okbg: #eef1ff; --ds-errbg: #fdeceb; --ds-tab: rgba(0,0,0,.05); }
+    :host([data-ds-dark]) { --ds-bg: #232326; --ds-fg: #ececf1; --ds-muted: #a3a3ad;
+      --ds-border: rgba(255,255,255,.16); --ds-hover: rgba(255,255,255,.10); --ds-accent: #7b93ff; --ds-danger: #ff6b60; --ds-input: #1b1b1e;
+      --ds-okbg: rgba(123,147,255,.14); --ds-errbg: rgba(255,107,96,.14); --ds-tab: rgba(255,255,255,.08); }
+    * { box-sizing: border-box; }
+    .tabs { display: flex; align-items: center; gap: 4px; overflow-x: auto; overflow-y: hidden; max-width: 62vw; }
+    .tab { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 7px;
+      background: transparent; color: var(--ds-muted); font: inherit; font-size: 12px; border: 0; cursor: default; white-space: nowrap; }
+    .tab:hover { background: var(--ds-hover); color: var(--ds-fg); }
+    .tab.active { background: var(--ds-okbg); color: var(--ds-accent); font-weight: 600; }
+    .tab.busy { background: var(--ds-okbg); color: var(--ds-accent); opacity: .8; }
+    .tab .x { opacity: .55; font-size: 11px; }
+    .tab .x:hover { opacity: 1; }
+    .btn { height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent;
+      color: var(--ds-muted); font: inherit; font-size: 13px; cursor: default; white-space: nowrap; }
+    .btn:hover { background: var(--ds-hover); color: var(--ds-fg); }
+    .panel { position: absolute; top: calc(var(--dsh-windows-titlebar-height,40px) + 4px); right: 0;
+      min-width: 380px; max-width: 460px; max-height: 72vh; overflow: auto;
+      background: var(--ds-bg); color: var(--ds-fg);
+      border: 1px solid var(--ds-border); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.4);
+      display: none; padding: 6px; }
+    .panel.open { display: block; }
+    .panel.pinned { border-color: var(--ds-accent); }
+    .status { display: none; margin: 2px 4px 4px; padding: 6px 8px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+    .status.show { display: block; }
+    .status.busy { background: var(--ds-okbg); color: var(--ds-accent); }
+    .status.err { background: var(--ds-errbg); color: var(--ds-danger); }
+    .status.ok { background: var(--ds-okbg); color: var(--ds-accent); }
+    .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 6px; }
+    .head .title { font-size: 12px; font-weight: 600; }
+    .head .close { border: 0; background: transparent; color: var(--ds-muted); font-size: 15px; line-height: 1; cursor: default; padding: 2px 6px; border-radius: 6px; }
+    .head .close:hover { background: var(--ds-hover); color: var(--ds-fg); }
+    .item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 8px; cursor: default; }
+    .item:hover { background: var(--ds-hover); }
+    .item.busy { outline: 1px solid var(--ds-accent); }
+    .item.active { background: var(--ds-okbg); }
+    .item .grow { flex: 1 1 auto; min-width: 0; }
+    .item .name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item .meta { font-size: 11px; color: var(--ds-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .iconbtn { border: 0; background: transparent; color: var(--ds-muted); border-radius: 6px; padding: 3px 7px; font-size: 12px; cursor: default; }
+    .iconbtn:hover { background: var(--ds-hover); color: var(--ds-fg); }
+    .section { border-top: 1px solid var(--ds-border); margin-top: 4px; padding-top: 6px; }
+    .section .sect-title { font-size: 11px; color: var(--ds-muted); padding: 2px 6px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; }
+    .chip { border: 1px solid var(--ds-border); background: transparent; color: var(--ds-fg); border-radius: 999px;
+      padding: 3px 9px; font: inherit; font-size: 11px; cursor: default; }
+    .chip:hover { background: var(--ds-hover); border-color: var(--ds-accent); }
+    .btn-add { display: block; width: 100%; text-align: center; color: var(--ds-accent); font-weight: 600; padding: 8px; border: 0; background: transparent; font: inherit; font-size: 13px; cursor: default; }
+    .btn-add:hover { background: var(--ds-hover); border-radius: 8px; }
+    .btn-import { display: block; width: 100%; text-align: center; color: var(--ds-accent); font-weight: 600; padding: 6px; margin: 0 0 4px;
+      border: 1px dashed var(--ds-border); border-radius: 8px; background: transparent; font: inherit; font-size: 12px; cursor: default; }
+    .btn-import:hover { background: var(--ds-hover); }
+    .form { display: grid; gap: 6px; padding: 4px 6px 6px; }
+    .form label { font-size: 11px; color: var(--ds-muted); }
+    .form input { border: 1px solid var(--ds-border); border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px;
+      background: var(--ds-input); color: var(--ds-fg); width: 100%; }
+    .form input:focus { outline: 2px solid var(--ds-accent); outline-offset: -1px; }
+    .withbtn { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: end; }
+    .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
+    button.primary { background: var(--ds-accent); color: #fff; border: 0; border-radius: 6px; padding: 6px 14px; font: inherit; font-size: 12px; cursor: default; }
+    button.ghost { background: transparent; color: var(--ds-fg); border: 1px solid var(--ds-border); border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 12px; cursor: default; }
+    button.ghost:hover { background: var(--ds-hover); }
+    .hint { font-size: 11px; color: var(--ds-muted); }
+  `;
+  const tabsHost = document2.createElement("div"); tabsHost.className = "tabs";
+  const btn = document2.createElement("button");
+  btn.className = "btn"; btn.type = "button"; btn.textContent = "设备 ▾";
+  const panel = document2.createElement("div"); panel.className = "panel";
+  const statusHost = document2.createElement("div"); statusHost.className = "status";
+  const listHost = document2.createElement("div"); listHost.className = "list";
+  const addSection = document2.createElement("div"); addSection.className = "add";
+  panel.append(statusHost, listHost, addSection);
+  shadow.append(style, tabsHost, btn, panel);
+
+  let devices = [];
+  let sshHosts = [];
+  const draft = { name: "", ssh: "", port: "", unit: "dsh.service" };
+  let addMode = false;
+  let editingId = null;
+  const busy = new Set();
+  let openIds = [];
+  let activeId = "local";
+  let message = "";
+  let notice = "";
+
+  const applyTheme = () => {
+    if (!document2.body) return;
+    let dark = false;
+    try { dark = documentIsDark(document2); } catch { dark = false; }
+    root.toggleAttribute("data-ds-dark", dark);
+  };
+
+  const mount = () => {
+    if (!document2.body) return;
+    if (document2.location.protocol !== "file:" && document2.querySelector("[data-shell-overlay]") === null) return;
+    document2.body.appendChild(root);
+    applyTheme();
+    mountObserver.disconnect();
+  };
+  const mountObserver = new MutationObserver(mount);
+  mountObserver.observe(document2.documentElement, { childList: true, subtree: true });
+  mount();
+
+  const themeObserver = new MutationObserver(applyTheme);
+  themeObserver.observe(document2.documentElement, { attributes: true, attributeFilter: ["data-ds-dark-theme", "class", "style"] });
+  if (document2.body) themeObserver.observe(document2.body, { attributes: true, attributeFilter: ["data-ds-dark-theme", "class", "style"] });
+  try { document2.defaultView.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyTheme); } catch { /* ignore */ }
+
+  const nameOf = (id) => { const d = devices.find((x) => x.id === id); return d ? (d.name || d.ssh) : id; };
+  const renderStatus = () => {
+    statusHost.className = "status";
+    if (busy.size) { statusHost.classList.add("show", "busy"); statusHost.textContent = "正在连接 " + busy.size + " 台…（首次连接受网络影响可能要十几秒，可同时连多台）"; return; }
+    if (message) { statusHost.classList.add("show", "err"); statusHost.textContent = message; return; }
+    if (notice) { statusHost.classList.add("show", "ok"); statusHost.textContent = notice; return; }
+    statusHost.textContent = "";
+  };
+  const closePanel = () => { panel.classList.remove("open"); panel.classList.remove("pinned"); ipcRenderer.invoke("ssh-device:panel", false).catch(() => { /* ignore */ }); };
+  const refreshActive = async () => {
+    try {
+      const st = await ipcRenderer.invoke("ssh-device:active");
+      activeId = st && st.active ? st.active : "local";
+      openIds = (st && Array.isArray(st.open)) ? st.open : [];
+    } catch { /* ignore */ }
+  };
+  const renderTabs = () => {
+    tabsHost.replaceChildren();
+    const mk = (id, label, isActive, isBusy, closable) => {
+      const tab = document2.createElement("button");
+      tab.className = "tab" + (isActive ? " active" : "") + (isBusy ? " busy" : "");
+      tab.type = "button";
+      tab.textContent = isBusy ? label + " …" : label;
+      tab.addEventListener("click", () => {
+        if (isBusy) return;
+        activeId = id;
+        renderTabs(); renderList();
+        ipcRenderer.invoke("ssh-device:show", id).catch(() => { /* ignore */ });
+      });
+      if (closable) {
+        const x = document2.createElement("span"); x.className = "x"; x.textContent = "✕";
+        x.title = "断开并关闭";
+        x.addEventListener("click", (e) => { e.stopPropagation(); ipcRenderer.invoke("ssh-device:close", id).then(() => refresh()); });
+        tab.appendChild(x);
+      }
+      tabsHost.appendChild(tab);
+    };
+    mk("local", "本机", activeId === "local", false, false);
+    const ids = [];
+    for (const id of openIds) if (!ids.includes(id)) ids.push(id);
+    for (const id of busy) if (!ids.includes(id)) ids.push(id);
+    for (const d of devices) if (busy.has(d.id) && !ids.includes(d.id)) ids.push(d.id);
+    for (const id of ids) mk(id, nameOf(id), activeId === id, busy.has(id), true);
+  };
+  const openPanel = () => { panel.classList.add("open"); ipcRenderer.invoke("ssh-device:panel", true).catch(() => { /* ignore */ }); renderStatus(); renderTabs(); renderList(); renderAdd(); };
+  const idFor = (ssh) => String(ssh || "").replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").replace(/^-+|-+$/g, "") || "device";
+  const pendingHosts = () => { const saved = new Set(devices.map((d) => d.id)); return sshHosts.filter((h) => !saved.has(idFor(h.alias))); };
+  const portOf = (d) => { const p = Number(d.port); return p > 0 ? String(p) : "自动"; };
+  const resetDraft = () => { draft.name = ""; draft.ssh = ""; draft.port = ""; draft.unit = "dsh.service"; editingId = null; };
+  const startEdit = (d) => {
+    editingId = d.id; addMode = true; message = ""; notice = "";
+    draft.name = d.name; draft.ssh = d.ssh; draft.port = Number(d.port) > 0 ? String(d.port) : ""; draft.unit = d.unit;
+    panel.classList.add("pinned"); renderStatus(); renderAdd(); renderList(); renderTabs();
+  };
+
+  // Opens concurrently: several devices may connect in parallel.
+  const openDevice = (d) => {
+    if (addMode || busy.has(d.id) || openIds.includes(d.id)) {
+      if (openIds.includes(d.id)) { activeId = d.id; renderTabs(); renderList(); ipcRenderer.invoke("ssh-device:show", d.id).catch(() => { /* ignore */ }); closePanel(); }
+      return;
+    }
+    busy.add(d.id); message = ""; notice = "";
+    renderStatus(); renderTabs(); renderList();
+    ipcRenderer.invoke("ssh-device:open", d.id)
+      .then(() => { busy.delete(d.id); notice = (d.name || d.ssh) + " 已连接，点上面的标签查看。"; return refreshActive(); })
+      .catch((e) => { busy.delete(d.id); message = (e && e.message ? e.message : String(e)); })
+      .then(() => { renderStatus(); renderTabs(); renderList(); });
+  };
+  const openAll = () => {
+    const targets = devices.filter((d) => !openIds.includes(d.id) && !busy.has(d.id));
+    if (!targets.length) { notice = "所有设备都已连接。"; renderStatus(); return; }
+    notice = "正在并行连接 " + targets.length + " 台…";
+    renderStatus();
+    for (const d of targets) openDevice(d);
+  };
+
+  const renderList = () => {
+    listHost.replaceChildren();
+    const local = document2.createElement("div"); local.className = "item" + (activeId === "local" ? " active" : "");
+    const lg = document2.createElement("div"); lg.className = "grow";
+    const ln = document2.createElement("div"); ln.className = "name"; ln.textContent = "本机";
+    const lo = document2.createElement("div"); lo.className = "meta"; lo.textContent = "当前桌面";
+    lg.append(ln, lo); local.appendChild(lg);
+    local.addEventListener("click", () => { if (addMode) return; activeId = "local"; renderTabs(); renderList(); ipcRenderer.invoke("ssh-device:show", "local").catch(() => { /* ignore */ }); closePanel(); });
+    listHost.appendChild(local);
+    for (const d of devices) {
+      const isBusy = busy.has(d.id); const isOpen = openIds.includes(d.id);
+      const item = document2.createElement("div"); item.className = "item" + (isBusy ? " busy" : "") + (activeId === d.id ? " active" : "");
+      const grow = document2.createElement("div"); grow.className = "grow";
+      const name = document2.createElement("div"); name.className = "name"; name.textContent = d.name || d.ssh;
+      const state = isBusy ? "连接中…" : (isOpen ? (activeId === d.id ? "已连接 · 当前" : "已连接") : "未连接");
+      const meta = document2.createElement("div"); meta.className = "meta"; meta.textContent = d.ssh + " · 端口 " + portOf(d) + " · " + d.unit + " · " + state;
+      grow.append(name, meta);
+      const editBtn = document2.createElement("button"); editBtn.className = "iconbtn"; editBtn.type = "button"; editBtn.textContent = "✎"; editBtn.title = "编辑";
+      editBtn.addEventListener("click", (e) => { e.stopPropagation(); startEdit(d); });
+      const delBtn = document2.createElement("button"); delBtn.className = "iconbtn"; delBtn.type = "button"; delBtn.textContent = "🗑"; delBtn.title = "删除";
+      delBtn.addEventListener("click", (e) => { e.stopPropagation(); ipcRenderer.invoke("ssh-device:remove", d.id).then(() => { notice = "已删除。"; return refresh(); }); });
+      const restartBtn = document2.createElement("button"); restartBtn.className = "iconbtn"; restartBtn.type = "button"; restartBtn.textContent = "⟳"; restartBtn.title = "重启远端 " + d.unit;
+      restartBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        busy.add(d.id); message = ""; notice = "正在重启 " + (d.name || d.ssh) + " 的 " + d.unit + "…";
+        renderStatus(); renderTabs(); renderList();
+        ipcRenderer.invoke("ssh-device:restart", d.id)
+          .then((r) => { notice = (r && r.cancelled) ? "已取消重启。" : "已重启并重新连接。"; })
+          .catch((err) => { message = err && err.message ? err.message : String(err); })
+          .then(() => { busy.delete(d.id); return refreshActive(); })
+          .then(() => { renderStatus(); renderTabs(); renderList(); });
+      });
+      item.append(grow, restartBtn, editBtn, delBtn);
+      item.addEventListener("click", () => openDevice(d));
+      listHost.appendChild(item);
+    }
+  };
+
+  const quickAddAndOpen = (alias) => {
+    const id = idFor(alias);
+    busy.add(id); message = ""; notice = "";
+    renderStatus(); renderTabs(); renderList();
+    const payload = { ssh: alias, name: alias, port: Number(draft.port) || 0, unit: draft.unit || "dsh.service" };
+    ipcRenderer.invoke("ssh-device:import", [payload])
+      .then(() => ipcRenderer.invoke("ssh-device:list"))
+      .then((list) => { devices = list || []; return ipcRenderer.invoke("ssh-device:open", id); })
+      .then(() => { notice = alias + " 已连接，点标签查看。"; return refreshActive(); })
+      .catch((e) => { const text = e && e.message ? e.message : String(e); startEdit({ id, name: alias, ssh: alias, port: Number(draft.port) || 0, unit: draft.unit || "dsh.service" }); message = text; })
+      .then(() => { busy.delete(id); renderStatus(); renderTabs(); renderList(); });
+  };
+
+  const renderAdd = () => {
+    addSection.replaceChildren();
+    if (!addMode) {
+      if (devices.length > 1) {
+        const openAllBtn = document2.createElement("button"); openAllBtn.className = "btn-add"; openAllBtn.type = "button";
+        openAllBtn.textContent = "⏎ 全部连接（并行）";
+        openAllBtn.addEventListener("click", () => openAll());
+        addSection.appendChild(openAllBtn);
+      }
+      const addBtn = document2.createElement("button"); addBtn.className = "btn-add"; addBtn.type = "button"; addBtn.textContent = "＋ 添加设备";
+      addBtn.addEventListener("click", () => { resetDraft(); addMode = true; panel.classList.add("pinned"); message = ""; notice = ""; renderStatus(); renderAdd(); renderList(); renderTabs(); });
+      addSection.appendChild(addBtn);
+      const pending = pendingHosts();
+      if (pending.length) {
+        const sect = document2.createElement("div"); sect.className = "section";
+        const t = document2.createElement("div"); t.className = "sect-title"; t.textContent = "~/.ssh/config 中还有 " + pending.length + " 台未添加（点一下直接连接，端口自动检测）";
+        sect.appendChild(t);
+        const chips = document2.createElement("div"); chips.className = "chips";
+        for (const h of pending.slice(0, 40)) {
+          const chip = document2.createElement("button"); chip.className = "chip"; chip.type = "button";
+          chip.textContent = h.alias;
+          chip.title = [h.user, h.hostname, h.port].filter(Boolean).join(" @ ") || h.alias;
+          chip.addEventListener("click", () => quickAddAndOpen(h.alias));
+          chips.appendChild(chip);
+        }
+        sect.appendChild(chips);
+        addSection.appendChild(sect);
+      }
+      return;
+    }
+    const head = document2.createElement("div"); head.className = "head";
+    const title = document2.createElement("div"); title.className = "title"; title.textContent = editingId ? "编辑 SSH 设备" : "添加 SSH 设备";
+    const close = document2.createElement("button"); close.className = "close"; close.type = "button"; close.textContent = "✕"; close.title = "关闭";
+    close.addEventListener("click", () => { addMode = false; resetDraft(); message = ""; closePanel(); });
+    head.append(title, close);
+
+    const form = document2.createElement("div"); form.className = "form";
+    const mk = (label, key, attrs) => {
+      const wrap = document2.createElement("div");
+      const lab = document2.createElement("label"); lab.textContent = label;
+      const input = document2.createElement("input");
+      input.value = draft[key];
+      if (attrs) Object.assign(input, attrs);
+      input.addEventListener("input", () => { draft[key] = input.value; });
+      wrap.append(lab, input);
+      return { wrap, input };
+    };
+    const nameF = mk("显示名称", "name");
+    const sshF = mk("SSH 别名或 user@host", "ssh");
+    const portF = mk("远端 DSH 端口（留空 = 自动检测）", "port", { type: "number", placeholder: "留空自动检测" });
+    const detectBtn = document2.createElement("button"); detectBtn.className = "ghost"; detectBtn.type = "button"; detectBtn.textContent = "检测端口";
+    const portRow = document2.createElement("div"); portRow.className = "withbtn";
+    const detectWrap = document2.createElement("div");
+    detectBtn.addEventListener("click", async () => {
+      const old = detectBtn.textContent; detectBtn.disabled = true; detectBtn.textContent = "检测中…";
+      message = ""; notice = "正在检测端口…"; renderStatus();
+      try {
+        const res = await ipcRenderer.invoke("ssh-device:detect", { ssh: draft.ssh, unit: draft.unit });
+        draft.port = res && res.port ? String(res.port) : ""; portF.input.value = draft.port;
+        notice = "已检测到远端 DSH 端口：" + (res && res.port ? res.port : "未知");
+      } catch (e) { notice = ""; message = e && e.message ? e.message : String(e); }
+      detectBtn.textContent = old; detectBtn.disabled = false; renderStatus();
+    });
+    detectWrap.appendChild(detectBtn);
+    portRow.append(portF.wrap, detectWrap);
+    const unitF = mk("systemd 服务名", "unit");
+    const hint = document2.createElement("div"); hint.className = "hint"; hint.textContent = "端口留空即可（自动从远端日志读取）。设置页保持打开，保存或取消后才关闭。";
+    const actions = document2.createElement("div"); actions.className = "actions";
+    const cancel = document2.createElement("button"); cancel.className = "ghost"; cancel.type = "button"; cancel.textContent = "取消";
+    const save = document2.createElement("button"); save.className = "primary"; save.type = "button"; save.textContent = editingId ? "保存修改" : "保存";
+    actions.append(cancel, save);
+    form.append(nameF.wrap, sshF.wrap, portRow, unitF.wrap, hint, actions);
+    addSection.append(head, form);
+
+    if (!editingId && sshHosts.length) {
+      const sect = document2.createElement("div"); sect.className = "section";
+      const t = document2.createElement("div"); t.className = "sect-title"; t.textContent = "~/.ssh/config 里的主机（点选填入）";
+      const importBtn = document2.createElement("button"); importBtn.className = "btn-import"; importBtn.type = "button";
+      importBtn.textContent = "导入全部 " + sshHosts.length + " 台（端口 " + (draft.port ? draft.port : "自动") + " / " + (draft.unit || "dsh.service") + "）";
+      importBtn.addEventListener("click", async () => {
+        try {
+          const created = await ipcRenderer.invoke("ssh-device:import", sshHosts.map((h) => ({ ssh: h.alias, name: h.alias, port: Number(draft.port) || 0, unit: draft.unit || "dsh.service" })));
+          devices = (await ipcRenderer.invoke("ssh-device:list")) || [];
+          notice = "已导入 " + (created ? created.length : 0) + " 台设备。"; message = ""; addMode = false; resetDraft(); panel.classList.remove("pinned");
+          renderStatus(); renderTabs(); renderList(); renderAdd();
+        } catch (e) { message = e && e.message ? e.message : String(e); renderStatus(); }
+      });
+      const chips = document2.createElement("div"); chips.className = "chips";
+      for (const h of sshHosts.slice(0, 60)) {
+        const chip = document2.createElement("button"); chip.className = "chip"; chip.type = "button";
+        chip.textContent = h.alias;
+        chip.title = [h.user, h.hostname, h.port].filter(Boolean).join(" @ ") || h.alias;
+        chip.addEventListener("click", () => { draft.ssh = h.alias; if (!draft.name) draft.name = h.alias; renderAdd(); });
+        chips.appendChild(chip);
+      }
+      sect.append(t, importBtn, chips);
+      addSection.appendChild(sect);
+    }
+
+    cancel.addEventListener("click", () => { addMode = false; resetDraft(); panel.classList.remove("pinned"); message = ""; renderStatus(); renderAdd(); });
+    save.addEventListener("click", async () => {
+      const device = { id: idFor(draft.ssh), name: draft.name, ssh: draft.ssh, port: Number(draft.port) || 0, auth: "systemd", unit: draft.unit || "dsh.service" };
+      try {
+        const wasEdit = Boolean(editingId);
+        if (wasEdit) await ipcRenderer.invoke("ssh-device:update", { oldId: editingId, device });
+        else await ipcRenderer.invoke("ssh-device:add", device);
+        devices = (await ipcRenderer.invoke("ssh-device:list")) || [];
+        addMode = false; panel.classList.remove("pinned"); message = "";
+        resetDraft();
+        notice = wasEdit ? "已保存修改。" : "已添加。";
+        renderStatus(); renderTabs(); renderList(); renderAdd();
+      } catch (e) { message = e && e.message ? e.message : String(e); renderStatus(); }
+    });
+  };
+
+  const refresh = async () => {
+    try { devices = (await ipcRenderer.invoke("ssh-device:list")) || []; } catch { devices = []; }
+    try { sshHosts = (await ipcRenderer.invoke("ssh-device:ssh-hosts")) || []; } catch { sshHosts = []; }
+    await refreshActive();
+    renderStatus(); renderTabs(); renderList(); renderAdd();
+  };
+
+  btn.addEventListener("click", (event) => {
+    event.preventDefault();
+    if (panel.classList.contains("open")) { if (!addMode) closePanel(); }
+    else { openPanel(); void refresh(); }
+  });
+  document2.addEventListener("click", (event) => {
+    if (!panel.classList.contains("open")) return;
+    if (addMode) return;
+    if (!root.contains(event.target)) closePanel();
+  }, true);
+  document2.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && panel.classList.contains("open")) { addMode = false; resetDraft(); closePanel(); }
+  }, true);
+  void refresh();
+}
+

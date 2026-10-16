@@ -1,0 +1,355 @@
+
+// ===== DSH Desktop SSH device switcher (injected) =====
+// Devices open as switchable views inside the SAME window (titlebar/tabs stay visible).
+// Endpoint discovery and the SSH forward are started in PARALLEL to roughly halve the
+// first-connect wait (Windows OpenSSH 8.1 has no ControlMaster multiplexing).
+// Uses only bindings already imported by this bundle: spawn/execFile, promisify,
+// createServer$1 (node:net), setTimeout$1 (timers/promises), join/dirname, homedir,
+// readFileSync/writeFileSync/mkdirSync, createRequire, ipcMain/app/BrowserWindow/dialog, fetch, Buffer.
+const __dshDeviceSwitch = (() => {
+  const electronNS = createRequire(import.meta.url)('electron');
+  const WebContentsViewCtor = electronNS.WebContentsView;
+  const TITLEBAR_STRIP = 40;
+  const DEFAULT_PORT = 19989;
+  const sshOpts = () => ['-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3'];
+  const execFileAsync = promisify(execFile);
+  const configPath = () => join(app.getPath('userData'), 'ssh-devices.json');
+  const loadDevices = () => { try { return JSON.parse(readFileSync(configPath(), 'utf8')); } catch { return []; } };
+  const saveDevices = (list) => { mkdirSync(dirname(configPath()), { recursive: true }); writeFileSync(configPath(), JSON.stringify(list, null, 2)); };
+  function validateDevice(value) {
+    if (!value || !/^[a-zA-Z0-9_-]{1,80}$/.test(value.id) || value.id === 'local') throw new Error('设备 ID 无效');
+    if (typeof value.name !== 'string' || !value.name.trim() || value.name.length > 100) throw new Error('设备名称无效');
+    if (typeof value.ssh !== 'string' || !/^[a-zA-Z0-9_][a-zA-Z0-9_.@-]{0,200}$/.test(value.ssh)) throw new Error('请填写 SSH 配置别名或 user@host，不接受命令参数');
+    if (!Number.isInteger(value.port) || value.port < 0 || value.port > 65535) throw new Error('DSH 端口必须为 0–65535（0 = 自动检测）');
+    if (value.auth !== 'systemd') throw new Error('该设备未配置自动鉴权；请填写运行 DSH 的用户服务名');
+    if (!/^[a-zA-Z0-9_][a-zA-Z0-9_.@-]{0,100}\.service$/.test(value.unit)) throw new Error('systemd 服务名无效');
+    return { id: value.id, name: value.name.trim(), ssh: value.ssh, port: value.port, auth: 'systemd', unit: value.unit };
+  }
+  const idFor = (ssh) => String(ssh || '').replace(/[^a-zA-Z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '') || 'device';
+  function freePort() {
+    return new Promise((resolve, reject) => {
+      const server = createServer$1();
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        const port = server.address().port;
+        server.close((error) => error ? reject(error) : resolve(port));
+      });
+    });
+  }
+  async function probe(origin) {
+    try { const res = await fetch(origin, { redirect: 'manual', signal: AbortSignal.timeout(2000) }); return res.status; }
+    catch { return void 0; }
+  }
+  // Reads THIS host's DSH web endpoint. journalctl --user is usually unreadable over SSH,
+  // so the DSH web log is primary (run-dsh-web.sh tees to ~/.dsh/dsh-web-$(hostname).log).
+  function remoteEntryScript(unit) {
+    return [
+      'f="$HOME/.dsh/dsh-web-$(hostname).log"',
+      '{',
+      '  [ -f "$f" ] && grep -ho "dsh web: http://127.0.0.1:[0-9][0-9]*/?token=[A-Za-z0-9_-]*" "$f" 2>/dev/null',
+      '  id=$(systemctl --user show -P InvocationID ' + unit + ' 2>/dev/null)',
+      '  [ -n "$id" ] && journalctl --user "_SYSTEMD_INVOCATION_ID=$id" --no-pager -o cat 2>/dev/null | grep -ho "dsh web: http://127.0.0.1:[0-9][0-9]*/?token=[A-Za-z0-9_-]*"',
+      '} | tail -30'
+    ].join('\n') + '\n';
+  }
+  async function readCandidates(device) {
+    validateDevice(device);
+    const b64 = Buffer.from(remoteEntryScript(device.unit), 'utf8').toString('base64');
+    let stdout;
+    try {
+      ({ stdout } = await execFileAsync('ssh', [...sshOpts(), device.ssh, `echo ${b64} | base64 -d | sh`], { windowsHide: true, timeout: 30000, maxBuffer: 8 * 1024 * 1024 }));
+    } catch (error) {
+      throw new Error(`无法读取 ${device.ssh} 的 DSH 启动信息：${(error.stderr || '').trim() || error.code || error.message}`);
+    }
+    const seen = new Set();
+    const list = [];
+    for (const line of stdout.split('\n')) {
+      const match = line.match(/127\.0\.0\.1:(\d+)\/\?token=([A-Za-z0-9_-]+)/);
+      if (!match) continue;
+      const entry = { port: Number(match[1]), token: match[2] };
+      if (!(entry.port > 0) || !/^[A-Za-z0-9_-]{20,256}$/.test(entry.token) || seen.has(entry.token)) continue;
+      seen.add(entry.token);
+      list.push(entry);
+    }
+    if (!list.length) throw new Error(`${device.ssh} 上没找到 DSH 登录入口（已查 ~/.dsh/dsh-web-$(hostname).log 和 ${device.unit} 日志）；请确认该机 DSH 正在稳定运行`);
+    const want = Number(device.port) || 0;
+    if (want > 0) {
+      const exact = list.filter((entry) => entry.port === want);
+      if (exact.length) return exact.reverse();
+    }
+    return list.reverse();
+  }
+  async function startTunnel(device, remotePort) {
+    const port = await freePort();
+    const origin = `http://127.0.0.1:${port}`;
+    const child = spawn('ssh', [...sshOpts(), '-N', '-o', 'ExitOnForwardFailure=yes', '-L', `127.0.0.1:${port}:127.0.0.1:${remotePort}`, device.ssh], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    let diagnostic = '', failure, stopped = false, ready = false, onFailure;
+    child.stderr.on('data', (chunk) => { diagnostic = (diagnostic + chunk).slice(-4000); });
+    const failed = (error) => { failure = error; if (ready && !stopped && onFailure) onFailure(error); };
+    child.on('error', failed);
+    child.on('exit', (code, sig) => { if (!stopped) failed(new Error(`SSH 已断开 (${code ?? sig})：${diagnostic.trim()}`)); });
+    const stop = () => { stopped = true; try { child.kill(); } catch { /* ignore */ } };
+    for (let i = 0; i < 90; i++) {
+      if (failure) { stop(); throw failure; }
+      let status;
+      try { status = await probe(origin); } catch { status = void 0; }
+      if (status) {
+        if (![200, 401, 303].includes(status)) { stop(); throw new Error(`远端入口返回 HTTP ${status}`); }
+        ready = true;
+        return { origin, stop, onFailure: (fn) => { onFailure = fn; } };
+      }
+      await setTimeout$1(500);
+    }
+    const detail = diagnostic.trim() || `请确认远端 127.0.0.1:${remotePort} 上有 DSH 在监听，以及 SSH 允许本地转发`;
+    stop();
+    throw new Error(`SSH 转发未就绪（目标端口 ${remotePort}）：${detail}`);
+  }
+  async function pickToken(origin, candidates) {
+    for (const entry of candidates) {
+      try {
+        const res = await fetch(`${origin}/?token=${encodeURIComponent(entry.token)}`, { redirect: 'manual', signal: AbortSignal.timeout(8000) });
+        if (res.status === 303) return entry.token;
+      } catch { /* try next */ }
+    }
+    return null;
+  }
+  async function restartService(device) {
+    validateDevice(device);
+    try { await execFileAsync('ssh', [...sshOpts(), device.ssh, `systemctl --user restart ${device.unit}`], { windowsHide: true, timeout: 60000 }); }
+    catch (error) { throw new Error(`重启 ${device.name} / ${device.unit} 失败：${(error.stderr || '').trim() || error.code || error.message}`); }
+  }
+  function parseSshConfig() {
+    const configFile = join(homedir(), '.ssh', 'config');
+    let text;
+    try { text = readFileSync(configFile, 'utf8'); } catch { return []; }
+    const seen = new Map();
+    let current = [];
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.replace(/#.*$/, '').trim();
+      if (!line) continue;
+      const match = line.match(/^(\S+)\s+(.+)$/);
+      if (!match) continue;
+      const key = match[1].toLowerCase();
+      const value = match[2].trim();
+      if (key === 'host') {
+        current = [];
+        for (const alias of value.split(/\s+/)) {
+          if (!alias || /[*?!]/.test(alias)) continue;
+          const entry = { alias, hostname: '', user: '', port: '' };
+          seen.set(alias, entry);
+          current.push(entry);
+        }
+      } else if (key === 'hostname' || key === 'user' || key === 'port') {
+        for (const entry of current) if (!entry[key]) entry[key] = value;
+      }
+    }
+    return [...seen.values()];
+  }
+  const open = new Map();
+  let activeId = 'local';
+  let resizeHooked = false;
+  const liveWindow = () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+  function layout(entry) {
+    const win = liveWindow();
+    if (!win || !entry || !entry.view) return;
+    try {
+      const [w, h] = win.getContentSize();
+      entry.view.setBounds({ x: 0, y: TITLEBAR_STRIP, width: Math.max(0, w), height: Math.max(0, h - TITLEBAR_STRIP) });
+    } catch { /* ignore */ }
+  }
+  function hookResize() {
+    const win = liveWindow();
+    if (resizeHooked || !win) return;
+    resizeHooked = true;
+    win.on('resize', () => { const entry = open.get(activeId); if (entry) layout(entry); });
+    win.on('enter-full-screen', () => { const entry = open.get(activeId); if (entry) layout(entry); });
+    win.on('leave-full-screen', () => { const entry = open.get(activeId); if (entry) layout(entry); });
+  }
+  function showLocal() {
+    const win = liveWindow();
+    if (win) for (const entry of open.values()) { try { win.contentView.removeChildView(entry.view); } catch { /* ignore */ } }
+    activeId = 'local';
+    return true;
+  }
+  function showDevice(id) {
+    const win = liveWindow();
+    const entry = open.get(id);
+    if (!win || !entry) return false;
+    for (const [other, e] of open) { if (other !== id) { try { win.contentView.removeChildView(e.view); } catch { /* ignore */ } } }
+    try { win.contentView.removeChildView(entry.view); } catch { /* ignore */ }
+    win.contentView.addChildView(entry.view);
+    layout(entry);
+    activeId = id;
+    return true;
+  }
+  // The dropdown is DOM in the local page, so it cannot draw over the native device
+  // view. Detach the active view while the dropdown is open, re-attach when it closes.
+  function hideActiveView() {
+    const win = liveWindow();
+    const entry = open.get(activeId);
+    if (!win || !entry) return false;
+    try { win.contentView.removeChildView(entry.view); } catch { /* ignore */ }
+    return true;
+  }
+  function restoreActiveView() {
+    const win = liveWindow();
+    const entry = open.get(activeId);
+    if (!win || !entry) return false;
+    try { win.contentView.removeChildView(entry.view); } catch { /* ignore */ }
+    try { win.contentView.addChildView(entry.view); } catch { /* ignore */ }
+    layout(entry);
+    return true;
+  }
+  const statusFor = (id) => {
+    const entry = open.get(id);
+    const device = loadDevices().find((d) => d.id === id);
+    return { id, name: device?.name ?? id, ssh: device?.ssh ?? '', port: entry?.port ?? device?.port ?? 0, unit: device?.unit ?? '', open: Boolean(entry), active: activeId === id };
+  };
+  function closeDevice(id) {
+    const entry = open.get(id);
+    if (!entry) return;
+    const win = liveWindow();
+    if (win) { try { win.contentView.removeChildView(entry.view); } catch { /* ignore */ } }
+    try { entry.view.webContents.close(); } catch { /* ignore */ }
+    try { entry.tunnel.stop(); } catch { /* ignore */ }
+    open.delete(id);
+    if (activeId === id) activeId = 'local';
+  }
+  // Connect a device: discovery and forwarding start together; no view switching here.
+  async function connectDevice(device) {
+    if (!WebContentsViewCtor) throw new Error('当前 Electron 不支持 WebContentsView，无法在窗口内切换');
+    if (open.has(device.id)) return { ok: true, alreadyOpen: true, ...statusFor(device.id) };
+    const speculative = Number(device.port) > 0 ? Number(device.port) : DEFAULT_PORT;
+    const tunnelPromise = startTunnel(device, speculative);
+    let candidates;
+    try {
+      candidates = await readCandidates(device);
+    } catch (error) {
+      try { (await tunnelPromise).stop(); } catch { /* ignore */ }
+      throw error;
+    }
+    const remotePort = candidates[0].port;
+    let tunnel;
+    if (remotePort === speculative) {
+      tunnel = await tunnelPromise;
+    } else {
+      try { (await tunnelPromise).stop(); } catch { /* ignore */ }
+      tunnel = await startTunnel(device, remotePort);
+    }
+    let token = null;
+    try { token = await pickToken(tunnel.origin, candidates); } catch { token = null; }
+    if (!token) { tunnel.stop(); throw new Error(`${device.ssh} 上的登录令牌已失效（该机 ${device.unit} 可能正在反复重启）。请稍后重试。`); }
+    let view;
+    try {
+      view = new WebContentsViewCtor({ webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } });
+      if (typeof view.setBackgroundColor === 'function') view.setBackgroundColor('#141416');
+      await view.webContents.loadURL(`${tunnel.origin}/?token=${encodeURIComponent(token)}`);
+    } catch (error) {
+      try { view?.webContents?.close(); } catch { /* ignore */ }
+      tunnel.stop();
+      throw error;
+    }
+    open.set(device.id, { view, tunnel, port: remotePort, origin: tunnel.origin });
+    if (Number(device.port) !== remotePort) {
+      const list = loadDevices();
+      const idx = list.findIndex((d) => d.id === device.id);
+      if (idx >= 0) { list[idx] = { ...list[idx], port: remotePort }; saveDevices(list); }
+    }
+    hookResize();
+    tunnel.onFailure((error) => console.error(`[ssh-device] ${device.name} 隧道中断：${error.message}`));
+    view.webContents.on('destroyed', () => { const entry = open.get(device.id); if (entry) { try { entry.tunnel.stop(); } catch { /* ignore */ } open.delete(device.id); if (activeId === device.id) activeId = 'local'; } });
+    return { ok: true, ...statusFor(device.id) };
+  }
+  ipcMain.handle('ssh-device:list', () => loadDevices().map((device) => ({ ...device })));
+  ipcMain.handle('ssh-device:active', () => ({ active: activeId, open: [...open.keys()] }));
+  ipcMain.handle('ssh-device:show', (_event, id) => (id === 'local' ? showLocal() : showDevice(id)));
+  ipcMain.handle('ssh-device:panel', (_event, isOpen) => (isOpen ? hideActiveView() : restoreActiveView()));
+  ipcMain.handle('ssh-device:add', (_event, device) => {
+    const valid = validateDevice(device);
+    const list = loadDevices();
+    if (list.some((d) => d.id === valid.id)) throw new Error('设备 ID 已存在');
+    list.push(valid);
+    saveDevices(list);
+    return { ...valid };
+  });
+  ipcMain.handle('ssh-device:update', (_event, payload) => {
+    const oldId = String(payload && payload.oldId ? payload.oldId : '');
+    const valid = validateDevice(payload && payload.device ? payload.device : payload);
+    const list = loadDevices();
+    const index = list.findIndex((d) => d.id === oldId);
+    if (index < 0) throw new Error('未找到要修改的设备');
+    if (valid.id !== oldId && list.some((d) => d.id === valid.id)) throw new Error('设备 ID 已存在');
+    if (valid.id !== oldId) closeDevice(oldId);
+    list[index] = valid;
+    saveDevices(list);
+    return { ...valid };
+  });
+  ipcMain.handle('ssh-device:remove', (_event, id) => {
+    closeDevice(id);
+    saveDevices(loadDevices().filter((d) => d.id !== id));
+    return true;
+  });
+  ipcMain.handle('ssh-device:detect', async (_event, payload) => {
+    const ssh = String(payload && payload.ssh ? payload.ssh : '').trim();
+    const unit = String(payload && payload.unit ? payload.unit : 'dsh.service');
+    const probeDevice = validateDevice({ id: 'probe', name: 'probe', ssh, port: 0, auth: 'systemd', unit });
+    const candidates = await readCandidates(probeDevice);
+    return { port: candidates[0].port };
+  });
+  // Connect only; switching is explicit (tab click) so parallel connects do not yank the view.
+  ipcMain.handle('ssh-device:open', async (_event, id) => {
+    if (open.has(id)) return { ok: true, alreadyOpen: true, ...statusFor(id) };
+    const device = loadDevices().find((d) => d.id === id);
+    if (!device) throw new Error('未找到设备');
+    return await connectDevice(device);
+  });
+  ipcMain.handle('ssh-device:close', (_event, id) => { closeDevice(id); return true; });
+  ipcMain.handle('ssh-device:restart', async (_event, id) => {
+    const device = loadDevices().find((d) => d.id === id);
+    if (!device) throw new Error('未找到设备');
+    validateDevice(device);
+    const answer = await dialog.showMessageBox({
+      type: 'warning',
+      title: '重启远端 DSH',
+      message: `重启 ${device.name} 的 ${device.unit}？`,
+      detail: `SSH：${device.ssh}\n服务：${device.unit}\n\n这会中断该服务器上正在执行的任务。重启后会尝试自动重连。`,
+      buttons: ['取消', '重启远端 DSH'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    });
+    if (answer.response !== 1) return { ok: false, cancelled: true };
+    await restartService(device);
+    closeDevice(id);
+    let lastError;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await setTimeout$1(2500);
+      try {
+        const fresh = loadDevices().find((d) => d.id === id) || device;
+        return { ok: true, restarted: true, ...(await connectDevice(fresh)) };
+      } catch (error) { lastError = error; }
+    }
+    throw new Error(`已重启 ${device.unit}，但自动重连失败：${lastError ? lastError.message : '等待超时'}`);
+  });
+  ipcMain.handle('ssh-device:ssh-hosts', () => parseSshConfig());
+  ipcMain.handle('ssh-device:import', (_event, list) => {
+    const devices = loadDevices();
+    const created = [];
+    for (const item of Array.isArray(list) ? list : []) {
+      const ssh = String(item && item.ssh ? item.ssh : '').trim();
+      if (!ssh) continue;
+      const id = idFor(ssh);
+      if (devices.some((d) => d.id === id)) continue;
+      try {
+        const device = validateDevice({ id, name: item.name || ssh, ssh, port: Number(item.port) || 0, auth: 'systemd', unit: String(item.unit || 'dsh.service') });
+        devices.push(device);
+        created.push(device);
+      } catch { /* skip hosts whose alias cannot be validated */ }
+    }
+    saveDevices(devices);
+    return created;
+  });
+  ipcMain.handle('ssh-device:status', (_event, id) => statusFor(id));
+  return { dispose() { for (const id of [...open.keys()]) closeDevice(id); } };
+})();
+// ===== end DSH Desktop SSH device switcher =====
