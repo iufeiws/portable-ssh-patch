@@ -1,9 +1,23 @@
+# Node
 node_modules/
+
+# Archives, logs, scratch
 *.zip
 *.log
+*.tmp
+
+# Local patch/device state (never committed)
 ssh-devices.json
 ssh-device-patch-backup/
+app.asar.bak
+app.asar.patch-new
 artifacts/
 screenshots/
 .env
 .env.*
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
